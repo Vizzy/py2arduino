@@ -60,28 +60,24 @@ def get_op(op):
     if isinstance(op, ast.Div):
         return '/'
 
-def retrieve_info(obj):
-    if isinstance(obj, list):
-        yield [retrieve_info(x) for x in obj]
-
-    if isinstance(obj, ast.Name):
-        yield obj.id
-
-    if isinstance(obj, ast.Num):
-        yield obj.n
-
-def to_arduino(obj, result={}):
+def to_arduino(obj, result={'code': ''}, terminate=True):
 
     if obj == [] or obj is None:
         return result
 
     if isinstance(obj, list):
-        result = to_arduino(obj[0], result)
+        result = to_arduino(obj[0], result, terminate=terminate)
         obj.pop(0)
-        result = to_arduino(obj, result)
+        result = to_arduino(obj, result, terminate=terminate)
+
+    elif isinstance(obj, ast.Name):
+        return {'code': obj.id}
+
+    elif isinstance(obj, ast.Num):
+        return {'code': obj.n}
 
     elif isinstance(obj, ast.Module):
-        result = to_arduino(obj.body, result)
+        result = to_arduino(obj.body, result, terminate=terminate)
 
     elif isinstance(obj, ast.FunctionDef):
         func_name = obj.name
@@ -89,7 +85,7 @@ def to_arduino(obj, result={}):
 
         for arg in obj.args.args:
             arg_name = arg.arg
-            arg_type = next(retrieve_info(arg.annotation))
+            arg_type = to_arduino(arg.annotation, terminate=terminate)['code']
             func_args.add((arg_name, arg_type))
 
         args_code = ''
@@ -107,7 +103,7 @@ def to_arduino(obj, result={}):
 
         temp_result = result.copy()
         temp_result['code'] = ''
-        to_arduino(obj.body, temp_result)
+        to_arduino(obj.body, temp_result, terminate=terminate)
         body_code = temp_result['code']
 
         temp_code = FUNC_DEF.format(type=func_type, name=func_name,
@@ -123,7 +119,7 @@ def to_arduino(obj, result={}):
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
-        var_value = convert_value(next(retrieve_info(obj.value)))
+        var_value = convert_value(to_arduino(obj.value, terminate=terminate)['code'])
         var_type = get_type(var_value)
 
         if obj.col_offset > 0:
@@ -151,40 +147,40 @@ def to_arduino(obj, result={}):
         result['code'] += code
 
     elif isinstance(obj, ast.Expr):
-        return to_arduino(obj.value, result)
+        return to_arduino(obj.value, result, terminate=terminate)
 
     elif isinstance(obj, ast.Call):
-        func_name = next(retrieve_info(obj.func))
+        func_name = to_arduino(obj.func, terminate=terminate)['code']
 
         if (func_name not in result['funcs']
             and not hasattr(ardlib, func_name)):
             warn('function {} (line {}) is not defined'.format(func_name,
                 obj.lineno), TranslationWarning)
 
-        args = next(retrieve_info(obj.args))
+        if isinstance(obj.args[0], ast.Call):
+            temp_result = result.copy()
+            temp_result['code'] = ''
+            to_arduino(obj.args, temp_result, terminate=False)
+            args_code = temp_result['code'].lstrip()
 
-        # make them useable
-        args = map(next, args)
-        args = map(str, args)
-        args = list(args)
-
-        args_code = ''
-        for n, arg in enumerate(args):
-            if n + 1 < len(args):
-                args_code += arg + ', '
-            else:
-                args_code += arg
+        else:
+            args_code = ''
+            for n, arg in enumerate(obj.args):
+                if n + 1 < len(obj.args):
+                    args_code += str(to_arduino(arg, terminate=False)['code']).lstrip() + ', '
+                else:
+                    args_code += str(to_arduino(arg, terminate=False)['code']).lstrip()
 
         code = FUNC_CALL.format(indent=calc_indent(obj), name=func_name, args=args_code)
         result['code'] += code
 
     elif isinstance(obj, ast.Return):
-        ret_value = to_arduino(obj.value, {'code': ''})
+        ret_value = to_arduino(obj.value, {'code': ''}, terminate=terminate)
         result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
 
     elif isinstance(obj, ast.BinOp):
-        left = next(retrieve_info(obj.left))
-        right = next(retrieve_info(obj.right))
+        left = to_arduino(obj.left, terminate=terminate)['code']
+        right = to_arduino(obj.right, terminate=terminate)['code']
         op = get_op(obj.op)
 
         code = BIN_OP.format(indent=calc_indent(obj),
@@ -201,10 +197,14 @@ def to_arduino(obj, result={}):
         raise UnsupportedSemanticsError('{} is currently not supported (line {})'.format(
             obj, obj.lineno))
 
-    if (result['code'].endswith('}')):
-        result['code'] += '\n\n'
-    elif len(result['code'].rsplit('\n')[0]) > 0 and not result['code'].endswith('\n'):
-        result['code'] += ';\n'
+    # hackety hack
+    result['code'] = str(result['code'])
+
+    if terminate:
+        if (result['code'].endswith('}')):
+            result['code'] += '\n'
+        elif len(result['code'].rsplit('\n')[0]) > 0 and not result['code'].endswith('\n'):
+            result['code'] += ';\n'
 
     return result
 
