@@ -9,9 +9,9 @@ def setup():
 
 def loop():
     digitalWrite(led, HIGH)
-    delay(1000)
+    delay(calc_delay(500))
     digitalWrite(led, LOW)
-    delay(1000)
+    delay(calc_delay(500*2))
 
 def calc_delay(x: int) -> int:
     return x * 2
