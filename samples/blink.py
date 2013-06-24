@@ -14,4 +14,4 @@ def loop():
     delay(calc_delay(500*2))
 
 def calc_delay(x: int) -> int:
-    return x * 2
+	return x * 2

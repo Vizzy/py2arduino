@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.3
 
-import ast, os
+import ast, os, subprocess
 from argparse import ArgumentParser
 from warnings import warn, simplefilter
 
@@ -8,7 +8,7 @@ import ardlib
 
 VAR_NEW = '{indent}{type} {name} = {value}'
 VAR_REDEFINED = '{indent}{name} = {value}'
-FUNC_DEF = '{type} {name}({args})\n{{}}'
+FUNC_DEF = '{type} {name}({args})'
 FUNC_CALL = '{indent}{name}({args})'
 BIN_OP = '{indent}{left} {op} {right}'
 
@@ -21,13 +21,18 @@ types = {
     'bool': 'boolean'
 }
 
-calc_indent = lambda obj: ' ' * obj.col_offset
+MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
+BOARD_TAG = {board}
+ARDUINO_PORT = {port}
+include $(ARDMK_DIR)/arduino-mk/Arduino.mk'''
 
 class UnsupportedSemanticsError(Exception):
     pass
 
-class TranslationWarning(Warning):
+class UndeclaredFunctionWarning(Warning):
     pass
+
+calc_indent = lambda obj: ' ' * obj.col_offset
 
 def convert_value(value):
     if type(value) is bool:
@@ -106,16 +111,18 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         to_arduino(obj.body, temp_result, terminate=terminate)
         body_code = temp_result['code']
 
-        temp_code = FUNC_DEF.format(type=func_type, name=func_name,
+        declaration_code = FUNC_DEF.format(type=func_type, name=func_name,
                                 args=args_code)
 
-        partitioned = temp_code.partition('{')
-        code = (partitioned[0] + partitioned[1]
-                 + '\n' + body_code + partitioned[2])
+        code = (declaration_code + '\n{\n'
+                 + body_code + '}\n\n')
 
         result['funcs'].add(func_name)
         result['var_names']['local'] = set()
-        result['code'] += '\n' + code
+        result['code'] += code
+
+        if func_name != 'setup' and func_name != 'loop':
+            result['code'] = declaration_code + ';\n\n' + result['code']
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
@@ -154,8 +161,12 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 
         if (func_name not in result['funcs']
             and not hasattr(ardlib, func_name)):
-            warn('function {} (line {}) is not defined'.format(func_name,
-                obj.lineno), TranslationWarning)
+
+            # issue a warning if an undeclared function is used
+            warn('''function {} (line {}) is undefined
+If its definition occurs later, it will be prepended to the top'''.format(
+                func_name,
+                obj.lineno), UndeclaredFunctionWarning)
 
         if isinstance(obj.args[0], ast.Call):
             temp_result = result.copy()
@@ -220,6 +231,19 @@ def translate(code):
     to_arduino(parsed, result_template)
     return result_template
 
+def make_make(sketchname):
+    make = MAKE_STRUCTURE.format(
+    sketch_folder=sketchname,
+    port=args.port,
+    board=args.board)
+
+    with open('Makefile', 'w') as makefile:
+        makefile.write(make)
+
+def run_make(sketchname):
+    subprocess.call(['make', '-C', sketchname])
+    os.remove('Makefile')
+
 def main():
     file = open(args.file)
     pycode = file.read()
@@ -235,10 +259,25 @@ def main():
     with open('{0}/{0}.ino'.format(sketchname), 'w') as sketch:
         sketch.write(result['code'])
 
+    if args.compile:
+        make_make(sketchname)
+        run_make(sketchname)
+
 if __name__ == '__main__':
     argp = ArgumentParser()
     argp.add_argument('file', type=str, help='file to parse')
-    argp.add_argument('-w', action='store_true', default=False, help='suppress warnings')
+    argp.add_argument('-w', action='store_true', default=False, 
+        help='suppress warnings')
+
+    # options for compilation
+    argp.add_argument('-c', '--compile', action='store_true', 
+        default=False, help='compile the script')
+    argp.add_argument('-b', '--board', type=str, default='uno', 
+        help='board type to compile for')
+    argp.add_argument('-p', '--port', type=str,
+        help='arduino serial port')
+    argp.add_argument('-u', '--upload', action='store_true', default=False, 
+        help='upload the script to the board (works only if -c or --compile is specified')
     args = argp.parse_args()
 
     if args.w:
