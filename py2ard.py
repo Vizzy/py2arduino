@@ -224,9 +224,9 @@ def main():
     file = open(args.file)
     pycode = file.read()
     sketchname = file.name.split('.py')[0]
-
+    sketchname = sketchname.rsplit('/')[1]
     result = translate(pycode)
-
+    
     try:
         os.mkdir(sketchname)
     except OSError:
