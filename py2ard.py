@@ -2,7 +2,7 @@
 
 import ast, os
 from argparse import ArgumentParser
-from warnings import warn
+from warnings import warn, simplefilter
 
 import ardlib
 
@@ -238,6 +238,10 @@ def main():
 if __name__ == '__main__':
     argp = ArgumentParser()
     argp.add_argument('file', type=str, help='file to parse')
+    argp.add_argument('-w', action='store_true', default=False, help='suppress warnings')
     args = argp.parse_args()
+
+    if args.w:
+        simplefilter('ignore')
 
     main()
