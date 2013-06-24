@@ -1,6 +1,9 @@
 py2arduino
 ==========
 
-Python to Arduino translator. Highly experimental.
+Python to Arduino translator/compiler. Highly experimental.
 
-Compatibility: Python 3.3+
+Requirements: 
+* Python 3.3+
+* arduino-mk
+* Arduino IDE (available at http://arduino.cc)
