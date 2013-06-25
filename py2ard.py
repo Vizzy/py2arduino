@@ -68,14 +68,6 @@ def unsupported_syntax(message, line):
 
 calc_indent = lambda obj: ' ' * obj.col_offset
 
-def postprocess(code):
-    code = code.replace('True', 'true')
-    code = code.replace('False', 'false')
-
-    code = MESSAGE + '\n\n' + code
-
-    return code
-
 def get_type(value):
     valtype = type(value)
 
@@ -143,15 +135,15 @@ def get_func_returns(parsed):
 
     return funcs
 
-def to_arduino(obj, result={'code': ''}, terminate=True):
+def to_arduino(obj, result={'code': ''}, newline=True):
 
     if obj == [] or obj is None:
         return result
 
     if isinstance(obj, list):
-        to_arduino(obj[0], result, terminate=terminate)
+        to_arduino(obj[0], result, newline=newline)
         obj.pop(0)
-        to_arduino(obj, result, terminate=terminate)
+        to_arduino(obj, result, newline=newline)
 
     elif isinstance(obj, ast.Name):
         return {'code': obj.id}
@@ -160,7 +152,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         return {'code': obj.n}
 
     elif isinstance(obj, ast.Module):
-        result = to_arduino(obj.body, result, terminate=terminate)
+        result = to_arduino(obj.body, result, newline=newline)
 
     elif isinstance(obj, ast.FunctionDef):
         func_name = obj.name
@@ -168,7 +160,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 
         for arg in obj.args.args:
             arg_name = arg.arg
-            arg_type = to_arduino(arg.annotation, terminate=terminate)['code']
+            arg_type = to_arduino(arg.annotation, newline=newline)['code']
             func_args.add((arg_name, arg_type))
 
         args_code = ''
@@ -186,13 +178,13 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 
         temp_result = result.copy()
         temp_result['code'] = ''
-        to_arduino(obj.body, temp_result, terminate=terminate)
+        to_arduino(obj.body, temp_result, newline=newline)
         body_code = temp_result['code']
 
         declaration_code = FUNC_DEF.format(type=func_type, name=func_name,
                                 args=args_code)
 
-        code = (declaration_code + '\n{\n'
+        code = (declaration_code + ' {\n'
                  + body_code + '}\n\n')
 
         result['funcs'][func_name] = func_type
@@ -204,7 +196,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
-        var_value = to_arduino(obj.value, {'code': ''}, terminate=terminate)['code']
+        var_value = to_arduino(obj.value, {'code': ''}, newline=newline)['code']
 
         if isinstance(obj.value, ast.Call):
             var_type = result['funcs'][var_value.split('(')[0].lstrip()]
@@ -229,27 +221,27 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         result['code'] += code
 
     elif isinstance(obj, ast.Expr):
-        return to_arduino(obj.value, result, terminate=terminate)
+        return to_arduino(obj.value, result, newline=newline)
 
     elif isinstance(obj, ast.Call):
-        func_name = to_arduino(obj.func, {'code': ''}, terminate=False)['code']
+        func_name = to_arduino(obj.func, {'code': ''}, newline=False)['code']
 
         if isinstance(obj.args[0], ast.Call):
-            args_code = to_arduino(obj.args, {'code': ''}, terminate=False)['code'].lstrip()
+            args_code = to_arduino(obj.args, {'code': ''}, newline=False)['code'].lstrip()
 
         else:
             args_code = ''
             for n, arg in enumerate(obj.args):
                 if n + 1 < len(obj.args):
-                    args_code += str(to_arduino(arg, terminate=False)['code']).lstrip() + ', '
+                    args_code += str(to_arduino(arg, newline=False)['code']).lstrip() + ', '
                 else:
-                    args_code += str(to_arduino(arg, terminate=False)['code']).lstrip()
+                    args_code += str(to_arduino(arg, newline=False)['code']).lstrip()
 
         code = FUNC_CALL.format(indent=calc_indent(obj), name=func_name, args=args_code)
         result['code'] += code
 
     elif isinstance(obj, ast.Attribute):
-        class_name = to_arduino(obj.value, terminate=False)['code'].lstrip()
+        class_name = to_arduino(obj.value, newline=False)['code'].lstrip()
         attribute_name = obj.attr
 
         code = '{}.{}'.format(class_name, attribute_name)
@@ -264,7 +256,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         return {'code': code}
 
     elif isinstance(obj, ast.If):
-        test_code = to_arduino(obj.test, {'code': ''}, terminate=False)['code'].lstrip()
+        test_code = to_arduino(obj.test, {'code': ''}, newline=False)['code'].lstrip()
         body_code = to_arduino(obj.body, {'code': ''})['code']
         try:
             orelse_code = to_arduino(obj.orelse[0], {'code': ''})['code']
@@ -272,21 +264,21 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
             orelse_code = to_arduino(obj.orelse, {'code': ''})['code']
 
         if_code = (IF.format(indent=calc_indent(obj), test=test_code)
-            + '\n{}{{\n'.format(calc_indent(obj)) + body_code + 
+            + ' {\n' + body_code + 
             '{}}}\n'.format(calc_indent(obj)))
 
         if len(obj.orelse) >= 1:
             if isinstance(obj.orelse[0], ast.If) and 'else if' not in orelse_code:
                 orelse_code = orelse_code.replace('if', 'else if')
             else:
-                orelse_code = '{indent}else\n{indent}{{\n{indent}{code}{indent}}}'.format(
+                orelse_code = '{indent}else {{\n{indent}{code}{indent}}}'.format(
                     indent=calc_indent(obj), code=orelse_code)
 
         code = if_code + orelse_code
         result['code'] += code
 
     elif isinstance(obj, ast.Compare):
-        left = to_arduino(obj.left, terminate=False)['code'].lstrip()
+        left = to_arduino(obj.left, newline=False)['code'].lstrip()
         
         if len(obj.ops) is 1:
             cmpop = get_cmpop(obj.ops[0])
@@ -296,7 +288,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
                 obj.lineno)
 
         if len(obj.comparators) is 1:
-            comparator = str(to_arduino(obj.comparators[0], terminate=False)['code']).lstrip()
+            comparator = str(to_arduino(obj.comparators[0], newline=False)['code']).lstrip()
         else:
             unsupported_syntax(
                 'Comparisons with multiple operators are currently not supported',
@@ -306,12 +298,12 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         return {'code': code}
 
     elif isinstance(obj, ast.Return):
-        ret_value = to_arduino(obj.value, {'code': ''}, terminate=terminate)
+        ret_value = to_arduino(obj.value, {'code': ''}, newline=newline)
         result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
 
     elif isinstance(obj, ast.BinOp):
-        left = to_arduino(obj.left, terminate=terminate)['code']
-        right = to_arduino(obj.right, terminate=terminate)['code']
+        left = to_arduino(obj.left, newline=newline)['code']
+        right = to_arduino(obj.right, newline=newline)['code']
         op = get_operator(obj.op)
 
         code = BIN_OP.format(indent=calc_indent(obj),
@@ -319,7 +311,7 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
         result['code'] += code
 
     elif isinstance(obj, ast.Import):
-        terminate = False
+        newline = False
 
         modules = obj.names
 
@@ -340,16 +332,36 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
     # hackety hack
     result['code'] = str(result['code'])
 
-    if terminate:
-        if (result['code'].endswith('}')):
-            result['code'] += '\n'
-        elif len(result['code'].rsplit('\n')[0]) > 0 and not result['code'].endswith('\n'):
-            result['code'] += ';\n'
+    if newline:
+        result['code'] += '\n'
 
     if args.verbose:
         print(result['code'])
 
     return result
+
+def postprocess(code):
+    code = code.replace('True', 'true')
+    code = code.replace('False', 'false')
+
+    code = code.splitlines()
+    code = [line.rstrip() for line in code]
+
+    for n, line in enumerate(code):
+        if (not (line.endswith('{') or line.endswith('}'))
+            and not line.endswith(';') and len(line) > 0):
+            line += ';\n'
+        elif line.endswith('}'):
+            line += '\n\n'
+        elif len(line) > 0:
+            line += '\n'
+        code[n] = line
+
+    code = ''.join(code)
+
+    code = MESSAGE + '\n\n' + code
+
+    return code
 
 def translate(code):
     parsed = ast.parse(code)
