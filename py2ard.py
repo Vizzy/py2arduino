@@ -363,12 +363,14 @@ def write_translation(filename, extension='ino'):
     except OSError:
         pass
 
-    with open('{}.{}'.format(filename.split('.')[0], extension), 'w') as sketch:
+    filename = filename.rsplit('/')[1]
+
+    with open('{}/{}.{}'.format(sketchname, filename.split('.')[0], extension), 'w') as sketch:
         sketch.write(result['code'])
 
 def main():
     global sketchname
-    sketchname = args.file.split('.py')[0]
+    sketchname = args.file.split('.py')[0].rsplit('/')[1]
 
     write_translation(args.file)
 
