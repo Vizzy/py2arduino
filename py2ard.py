@@ -68,7 +68,6 @@ def postprocess(code):
 
     return code
 
-
 def get_type(value):
     valtype = type(value)
 
@@ -119,6 +118,22 @@ def get_cmpop(op):
 
     if isinstance(op, ast.IsNot):
         return '!='
+
+def get_func_returns(parsed):
+    funcs = {}
+
+    for obj in parsed.body:
+        if isinstance(obj, ast.FunctionDef):
+            func_name = obj.name
+
+            if obj.returns is None:
+                func_type = 'void'
+            else:
+                func_type = types[obj.returns.id]
+
+            funcs[func_name] = func_type
+
+    return funcs
 
 def to_arduino(obj, result={'code': ''}, terminate=True):
 
@@ -331,7 +346,9 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 def translate(code):
     parsed = ast.parse(code)
 
+    funcs = get_func_returns(parsed)
     result = result_template.copy()
+    result['funcs'].update(funcs)
 
     to_arduino(parsed, result)
 
