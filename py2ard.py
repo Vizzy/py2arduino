@@ -237,12 +237,15 @@ def make_make(sketchname):
     port=args.port,
     board=args.board)
 
-    with open('Makefile', 'w') as makefile:
+    with open(os.path.join(sketchname, 'Makefile'), 'w') as makefile:
         makefile.write(make)
 
 def run_make(sketchname):
-    subprocess.call(['make', '-C', sketchname])
-    os.remove('Makefile')
+    if args.upload:
+        subprocess.call(['make', 'upload', '-C', sketchname])
+    else:
+        subprocess.call(['make', '-C', sketchname])
+    os.remove(os.path.join(sketchname, 'Makefile'))
 
 def main():
     file = open(args.file)
@@ -274,7 +277,7 @@ if __name__ == '__main__':
         default=False, help='compile the script')
     argp.add_argument('-b', '--board', type=str, default='uno', 
         help='board type to compile for')
-    argp.add_argument('-p', '--port', type=str,
+    argp.add_argument('-p', '--port', default='/dev/ttyusb', type=str,
         help='arduino serial port')
     argp.add_argument('-u', '--upload', action='store_true', default=False, 
         help='upload the script to the board (works only if -c or --compile is specified')
