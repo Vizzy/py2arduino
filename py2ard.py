@@ -302,9 +302,10 @@ def to_arduino(obj, result={'code': ''}, terminate=True):
 
         for module in modules:
             filename = module.name + '.py'
-            write_translation(filename, 'h')
+            translated = translate(open(filename).read())
+            write_translation(translated['code'], module.name, 'h')
 
-        result['code'] += '#include ' + module.name + '\n'
+        result['code'] = '#include ' + module.name + '\n' + result['code']
 
     elif isinstance(obj, ast.Pass):
         pass
@@ -337,6 +338,19 @@ def translate(code):
     result['code'] = postprocess(result['code'])
     return result
 
+def write_translation(translated, filename, extension='ino'):
+    
+    try:
+        os.mkdir(sketchname)
+    except OSError:
+        pass
+
+    if '/' in filename:
+        filename = filename.rsplit('/')[1]
+
+    with open('{}/{}.{}'.format(sketchname, filename.split('.')[0], extension), 'w') as sketch:
+        sketch.write(translated)
+
 def make_make(sketchname):
     make = MAKE_STRUCTURE.format(
     sketch_folder=sketchname,
@@ -353,26 +367,14 @@ def run_make(sketchname):
         subprocess.call(['make', '-C', sketchname])
     os.remove(os.path.join(sketchname, 'Makefile'))
 
-def write_translation(filename, extension='ino'):
-    file = open(filename)
-    pycode = file.read()
-    result = translate(pycode)
-    
-    try:
-        os.mkdir(sketchname)
-    except OSError:
-        pass
-
-    filename = filename.rsplit('/')[1]
-
-    with open('{}/{}.{}'.format(sketchname, filename.split('.')[0], extension), 'w') as sketch:
-        sketch.write(result['code'])
-
 def main():
     global sketchname
     sketchname = args.file.split('.py')[0].rsplit('/')[1]
 
-    write_translation(args.file)
+    sketchfile = open(args.file)
+    translated = translate(sketchfile.read())
+
+    write_translation(translated['code'], sketchname)
 
     if args.compile:
         make_make(sketchname)
