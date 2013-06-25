@@ -1,5 +1,3 @@
-from ardlib import *
-
 # define the led
 led = 13
 
