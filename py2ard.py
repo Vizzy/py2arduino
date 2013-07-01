@@ -15,11 +15,13 @@ MESSAGE = '''/*
 
 VAR_NEW = '{indent}{type} {name} = {value}'
 VAR_REDEFINED = '{indent}{name} = {value}'
+AUG_ASSIGN = '{indent}{name} = {name} {op} {value}'
 FUNC_DEF = '{type} {name}({args})'
 FUNC_CALL = '{indent}{name}({args})'
 BIN_OP = '{indent}{left} {op} {right}'
 CMPOP = '{left} {cmpop} {comparator}'
 IF = '{indent}if ({test})'
+WHILE = '{indent}while ({test})'
 
 types = {
     'int': 'int',
@@ -91,6 +93,9 @@ def get_operator(op):
 
     if isinstance(op, ast.Div):
         return '/'
+
+    if isinstance(op, ast.Mod):
+        return '%'
 
 def get_cmpop(op):
     # cmpop = Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn
@@ -220,6 +225,16 @@ def to_arduino(obj, result={'code': ''}, newline=True):
 
         result['code'] += code
 
+    elif isinstance(obj, ast.AugAssign):
+        var_name = obj.target.id
+        op = get_operator(obj.op)
+        var_value = str(to_arduino(obj.value, {'code': ''}, newline=newline)['code'])
+
+        code = AUG_ASSIGN.format(indent=calc_indent(obj), name=var_name, 
+                                    op=op, value=var_value)
+
+        result['code'] += code
+
     elif isinstance(obj, ast.Expr):
         return to_arduino(obj.value, result, newline=newline)
 
@@ -265,20 +280,36 @@ def to_arduino(obj, result={'code': ''}, newline=True):
 
         if_code = (IF.format(indent=calc_indent(obj), test=test_code)
             + ' {\n' + body_code + 
-            '{}}}\n'.format(calc_indent(obj)))
+            '{indent}}}\n'.format(indent=calc_indent(obj)))
 
         if len(obj.orelse) >= 1:
             if isinstance(obj.orelse[0], ast.If) and 'else if' not in orelse_code:
                 orelse_code = orelse_code.replace('if', 'else if')
             else:
-                orelse_code = '{indent}else {{\n{indent}{code}{indent}}}'.format(
+                orelse_code = '{indent}else {{\n{code}{indent}}}'.format(
                     indent=calc_indent(obj), code=orelse_code)
 
         code = if_code + orelse_code
         result['code'] += code
 
+    elif isinstance(obj, ast.While):
+        test_code = to_arduino(obj.test, {'code': ''}, newline=False)['code'].lstrip()
+        body_code = to_arduino(obj.body, {'code': ''})['code']
+        try:
+            orelse_code = to_arduino(obj.orelse[0], {'code': ''})['code']
+        except IndexError:
+            # there is no else case in the loop
+            orelse_code = ''
+
+        while_code = (WHILE.format(indent=calc_indent(obj), test=test_code)
+                    + ' {\n' + body_code + 
+                    '{indent}}}\n'.format(indent=calc_indent(obj)))
+
+        code = while_code + orelse_code
+        result['code'] += code
+
     elif isinstance(obj, ast.Compare):
-        left = to_arduino(obj.left, newline=False)['code'].lstrip()
+        left = to_arduino(obj.left, {'code': ''}, newline=False)['code'].lstrip()
         
         if len(obj.ops) is 1:
             cmpop = get_cmpop(obj.ops[0])
@@ -324,6 +355,12 @@ def to_arduino(obj, result={'code': ''}, newline=True):
 
     elif isinstance(obj, ast.Pass):
         pass
+
+    elif isinstance(obj, ast.Break):
+        result['code'] += calc_indent(obj) + 'break'
+
+    elif isinstance(obj, ast.Continue):
+        result['code'] += calc_indent(obj) + 'continue'
 
     else:
         raise UnsupportedSyntaxError('{} syntax is currently not supported'.format(
@@ -383,7 +420,7 @@ def write_translation(translated, filename, extension='ino'):
         pass
 
     if '/' in filename:
-        filename = filename.rsplit('/')[1]
+        filename = os.path.split(filename)[1]
 
     with open('{}/{}.{}'.format(sketchname, filename.split('.')[0], extension), 'w') as sketch:
         sketch.write(translated)
