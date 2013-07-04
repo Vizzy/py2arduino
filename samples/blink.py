@@ -1,8 +1,8 @@
 # define the led
-led = 13
 
 def setup():
-    led = 10
+    global led
+    led = 13
     pinMode(led, OUTPUT)
 
 def loop():
@@ -12,4 +12,4 @@ def loop():
     delay(calc_delay(500*2))
 
 def calc_delay(x: int) -> int:
-	return x * 2
+    return x * 2

@@ -26,7 +26,7 @@ WHILE = '{indent}while ({test})'
 types = {
     'int': 'int',
     'float': 'float',
-    'str': 'string',
+    'str': 'char',
     'bool': 'boolean',
     'None': 'void',
     'NoneType': 'void',
@@ -54,8 +54,8 @@ result_template = {
 MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
 BOARD_TAG = {board}
 ARDUINO_PORT = {port}
-CFLAGS = -std=c++0x
-export CFLAGS
+# CFLAGS = -std=c++0x
+# export CFLAGS
 include $(ARDMK_DIR)/arduino-mk/Arduino.mk'''
 
 class CompilationError(Exception):
@@ -84,16 +84,20 @@ def get_type(value):
     valtype = type(value)
 
     if valtype is str:
+        # get rid of the quotes
+        value = value.replace("'", '')
+        value = value.replace('"', '')
+
         if len(value) is 1:
             return 'char'
         else:
-            return 'string[{}]'.format(len(value))
-    else:
-        try:
-            return types[valtype.__name__]
-        except KeyError:
-            raise TypeError('Type {} is not yet supported'.format(
-                valtype.__name__))
+            return 'char *'
+
+    try:
+        return types[valtype.__name__]
+    except KeyError:
+        raise TypeError('Type {} is not yet supported'.format(
+            valtype.__name__))
 
 def get_operator(op):
     if isinstance(op, ast.Add):
@@ -227,6 +231,9 @@ def to_arduino(obj, result=None, newline=True):
         result['var_names']['local'] = set()
         result['code'] += code
 
+        # hack for global variables
+        result['global_declarations'] = temp_result.get('global_declarations')
+
         if func_name != 'setup' and func_name != 'loop':
             result['code'] = declaration_code + ';\n\n' + result['code']
 
@@ -245,16 +252,37 @@ def to_arduino(obj, result=None, newline=True):
 
         scope = 'global' if obj.col_offset is 0 else 'local'
 
-        if (var_name in result['var_names'][scope]
-            or var_name in result['var_names']['global']):
-
+        if var_name in result['var_names'][scope]:
             code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
              value=var_value)
         else:
-            code = VAR_NEW.format(indent=calc_indent(obj), type=var_type,
-             name=var_name, 
-                value=var_value)
-            result['var_names']['local'].add(var_name)
+            if var_name in result['var_names']['pending_globals']:
+                scope = 'global'
+
+                # add it to the top if it isn't there
+
+                if var_name not in result['var_names']['global']:
+                    declaration_code = '{} {}'.format(var_type, var_name)
+
+                    # hack
+                    try:
+                        result['global_declarations'].append(declaration_code)
+                    except KeyError:
+                        result['global_declarations'] = [declaration_code]
+
+                    result['var_names']['global'].add(var_name)
+
+                code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
+             value=var_value)
+
+                result['var_names']['pending_globals'].remove(var_name)
+
+            else:    
+                code = VAR_NEW.format(indent=calc_indent(obj), type=var_type,
+                 name=var_name, 
+                    value=var_value)
+        
+        result['var_names'][scope].add(var_name)
 
         result['code'] += code
 
@@ -393,6 +421,11 @@ def to_arduino(obj, result=None, newline=True):
 
         result['code'] = '#include ' + module.name + '\n' + result['code']
 
+    elif isinstance(obj, ast.Global):
+        newline = False
+        pending_globals = {name for name in obj.names}
+        result['var_names']['pending_globals'] = pending_globals
+
     elif isinstance(obj, ast.Pass):
         pass
 
@@ -414,10 +447,20 @@ def to_arduino(obj, result=None, newline=True):
 
     return result
 
-def postprocess(code):
+def postprocess(result):
+    code = result['code']
+
     code = code.replace('True', 'true')
     code = code.replace('False', 'false')
 
+    # hack to support global variables
+    try:
+        global_declarations = '\n'.join(result['global_declarations']) + '\n'
+        code = global_declarations + code
+    except TypeError:
+        pass
+
+    # add semicolons
     code = code.splitlines()
     code = [line.rstrip() for line in code]
 
@@ -446,7 +489,7 @@ def translate(code):
 
     to_arduino(parsed, result)
 
-    result['code'] = postprocess(result['code'])
+    result['code'] = postprocess(result)
     return result
 
 def write_translation(translated, filename, extension='ino'):
