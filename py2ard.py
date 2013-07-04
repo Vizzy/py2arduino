@@ -44,23 +44,33 @@ for attr in dir(ardlib):
         funcs[func_name] = types[func_type]
 
 result_template = {
-    'var_names': {'global': set(), 'local': set()},
-    'funcs': funcs,
-    'code': ''
+            'var_names': {'global': set(), 'local': set(), 
+                            'pending_globals': set()},
+            'funcs': funcs,
+            'code': ''
 }
+
 
 MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
 BOARD_TAG = {board}
 ARDUINO_PORT = {port}
+CFLAGS = -std=c++0x
+export CFLAGS
 include $(ARDMK_DIR)/arduino-mk/Arduino.mk'''
 
-class UnsupportedSyntaxError(Exception):
+class CompilationError(Exception):
     def __init__(self, message, line):
         self.message = message
         self.line = line
 
     def __str__(self):
         return '{} (line {})'.format(self.message, self.line)
+
+class UnsupportedSyntaxError(CompilationError):
+    pass
+
+class ContainerTypeError(CompilationError):
+    pass
 
 class UndeclaredFunctionWarning(Warning):
     pass
@@ -79,7 +89,11 @@ def get_type(value):
         else:
             return 'string[{}]'.format(len(value))
     else:
-        return types[valtype.__name__]
+        try:
+            return types[valtype.__name__]
+        except KeyError:
+            raise TypeError('Type {} is not yet supported'.format(
+                valtype.__name__))
 
 def get_operator(op):
     if isinstance(op, ast.Add):
@@ -140,7 +154,23 @@ def get_func_returns(parsed):
 
     return funcs
 
-def to_arduino(obj, result, newline=True):
+def get_container_type(container):
+    if len(container) is 0:
+        return None
+
+    container_type = type(container[0])
+
+    # check that all the elements are of the same type
+    for elt in container:
+        if type(elt) is not container_type:
+            raise TypeError
+    else:
+        return get_type(container[0])
+
+def to_arduino(obj, result=None, newline=True):
+
+    if result is None:
+        result = result_template.copy()
 
     if obj == [] or obj is None:
         return result
@@ -165,7 +195,7 @@ def to_arduino(obj, result, newline=True):
 
         for arg in obj.args.args:
             arg_name = arg.arg
-            arg_type = to_arduino(arg.annotation, {'code': ''}, newline=newline)['code']
+            arg_type = to_arduino(arg.annotation, newline=newline)['code']
             func_args.add((arg_name, arg_type))
 
         args_code = ''
@@ -182,7 +212,10 @@ def to_arduino(obj, result, newline=True):
             func_type = types[obj.returns.id]
 
         
-        body_code = to_arduino(obj.body, {'code': ''}, newline=newline)['code']
+        temp_result = result.copy()
+        temp_result['code'] = ''
+        to_arduino(obj.body, temp_result, newline=newline)
+        body_code = temp_result['code']
 
         declaration_code = FUNC_DEF.format(type=func_type, name=func_name,
                                 args=args_code)
@@ -199,10 +232,12 @@ def to_arduino(obj, result, newline=True):
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
-        var_value = to_arduino(obj.value, {'code': ''}, newline=newline)['code']
+        var_value = to_arduino(obj.value, newline=newline)['code']
 
         if isinstance(obj.value, ast.Call):
             var_type = result['funcs'][var_value.split('(')[0].lstrip()]
+        elif isinstance(obj.value, (ast.List, ast.Tuple)):
+            var_type = get_container_type(obj.value.elts)
         else:
             var_type = get_type(var_value)
 
@@ -226,7 +261,7 @@ def to_arduino(obj, result, newline=True):
     elif isinstance(obj, ast.AugAssign):
         var_name = obj.target.id
         op = get_operator(obj.op)
-        var_value = str(to_arduino(obj.value, {'code': ''}, newline=newline)['code'])
+        var_value = str(to_arduino(obj.value, newline=newline)['code'])
 
         code = AUG_ASSIGN.format(indent=calc_indent(obj), name=var_name, 
                                     op=op, value=var_value)
@@ -237,26 +272,26 @@ def to_arduino(obj, result, newline=True):
         return to_arduino(obj.value, result, newline=newline)
 
     elif isinstance(obj, ast.Call):
-        func_name = to_arduino(obj.func, {'code': ''}, newline=False)['code']
+        func_name = to_arduino(obj.func, newline=False)['code']
 
         if isinstance(obj.args[0], ast.Call):
-            args_code = to_arduino(obj.args, {'code': ''}, newline=False)['code'].lstrip()
+            args_code = to_arduino(obj.args, newline=False)['code'].lstrip()
 
         else:
             args_code = ''
             for n, arg in enumerate(obj.args):
                 if n + 1 < len(obj.args):
-                    args_code += str(to_arduino(arg, {'code': ''},
+                    args_code += str(to_arduino(arg,
                                      newline=False)['code']).lstrip() + ', '
                 else:
-                    args_code += str(to_arduino(arg, {'code': ''},
+                    args_code += str(to_arduino(arg,
                                      newline=False)['code']).lstrip()
 
         code = FUNC_CALL.format(indent=calc_indent(obj), name=func_name, args=args_code)
         result['code'] += code
 
     elif isinstance(obj, ast.Attribute):
-        class_name = to_arduino(obj.value, {'code': ''},
+        class_name = to_arduino(obj.value,
          newline=False)['code'].lstrip()
         attribute_name = obj.attr
 
@@ -272,12 +307,12 @@ def to_arduino(obj, result, newline=True):
         return {'code': code}
 
     elif isinstance(obj, ast.If):
-        test_code = to_arduino(obj.test, {'code': ''}, newline=False)['code'].lstrip()
-        body_code = to_arduino(obj.body, {'code': ''})['code']
+        test_code = to_arduino(obj.test, newline=False)['code'].lstrip()
+        body_code = to_arduino(obj.body)['code']
         try:
-            orelse_code = to_arduino(obj.orelse[0], {'code': ''})['code']
+            orelse_code = to_arduino(obj.orelse[0])['code']
         except IndexError:
-            orelse_code = to_arduino(obj.orelse, {'code': ''})['code']
+            orelse_code = to_arduino(obj.orelse)['code']
 
         if_code = (IF.format(indent=calc_indent(obj), test=test_code)
             + ' {\n' + body_code + 
@@ -294,10 +329,10 @@ def to_arduino(obj, result, newline=True):
         result['code'] += code
 
     elif isinstance(obj, ast.While):
-        test_code = to_arduino(obj.test, {'code': ''}, newline=False)['code'].lstrip()
-        body_code = to_arduino(obj.body, {'code': ''})['code']
+        test_code = to_arduino(obj.test, newline=False)['code'].lstrip()
+        body_code = to_arduino(obj.body)['code']
         try:
-            orelse_code = to_arduino(obj.orelse[0], {'code': ''})['code']
+            orelse_code = to_arduino(obj.orelse[0])['code']
 
             # realign the indent
             orelse_code = orelse_code.split(calc_indent(obj.orelse[0]))[1]
@@ -313,7 +348,7 @@ def to_arduino(obj, result, newline=True):
         result['code'] += code
 
     elif isinstance(obj, ast.Compare):
-        left = to_arduino(obj.left, {'code': ''}, newline=False)['code'].lstrip()
+        left = to_arduino(obj.left, newline=False)['code'].lstrip()
         
         if len(obj.ops) is 1:
             cmpop = get_cmpop(obj.ops[0])
@@ -323,7 +358,7 @@ def to_arduino(obj, result, newline=True):
                 obj.lineno)
 
         if len(obj.comparators) is 1:
-            comparator = str(to_arduino(obj.comparators[0], {'code': ''},
+            comparator = str(to_arduino(obj.comparators[0],
              newline=False)['code']).lstrip()
         else:
             unsupported_syntax(
@@ -334,12 +369,12 @@ def to_arduino(obj, result, newline=True):
         return {'code': code}
 
     elif isinstance(obj, ast.Return):
-        ret_value = to_arduino(obj.value, {'code': ''}, newline=newline)
+        ret_value = to_arduino(obj.value, newline=newline)
         result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
 
     elif isinstance(obj, ast.BinOp):
-        left = to_arduino(obj.left, {'code': ''}, newline=newline)['code']
-        right = to_arduino(obj.right, {'code': ''}, newline=newline)['code']
+        left = to_arduino(obj.left, newline=newline)['code']
+        right = to_arduino(obj.right, newline=newline)['code']
         op = get_operator(obj.op)
 
         code = BIN_OP.format(indent=calc_indent(obj),
