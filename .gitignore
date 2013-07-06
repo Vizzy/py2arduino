@@ -6,3 +6,5 @@
 *.c
 
 blink/Makefile
+
+libs/list_test.cpp

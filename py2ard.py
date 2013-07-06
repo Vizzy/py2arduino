@@ -54,8 +54,7 @@ result_template = {
 MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
 BOARD_TAG = {board}
 ARDUINO_PORT = {port}
-# CFLAGS = -std=c++0x
-# export CFLAGS
+CPPFLAGS = -std=c++11
 include $(ARDMK_DIR)/arduino-mk/Arduino.mk'''
 
 class CompilationError(Exception):
@@ -423,7 +422,7 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.Global):
         newline = False
-        pending_globals = {name for name in obj.names}
+        pending_globals = set(obj.names)
         result['var_names']['pending_globals'] = pending_globals
 
     elif isinstance(obj, ast.Pass):
