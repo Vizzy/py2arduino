@@ -1,7 +1,5 @@
 #include <stdlib.h>
-#include <iostream>
-
-// using namespace std;
+// #include <iostream>
 
 template <class T>
 class List;
@@ -83,6 +81,16 @@ public:
 		length = 0;
 	}
 
+	List(T *elts, int len)
+	{
+		length = 0;
+
+		for (int i = 0; i < len; ++i)
+		{
+			append(elts[i]);
+		}
+	}
+
 	bool contains(T elem)
 	{
 		Node<T> *cur_elem = &root_elem;
@@ -155,6 +163,8 @@ public:
 				return;
 			}
 
+			printf("%d\n", ind);
+
 			if (ind == 0)
 			{
 				Node<T> *root = &root_elem;
@@ -168,6 +178,7 @@ public:
 				while (count < ind)
 				{
 					cur_elem = cur_elem->next;
+					count++;
 				}
 
 				cur_elem->next = cur_elem->next->next;
@@ -183,23 +194,24 @@ public:
 		return theElem->data;
 	}
 
-	void print()
-	{
-		std::cout << "[";
+	// void to_string()
+	// {
 
-		for (int i = 0; i < length; ++i)
-		{
-			Node<T> *elem = get_elem_at_index(i);
-			std::cout << elem->data; 
+	// 	std::cout << "[";
 
-			if (i + 1 < length)
-			{
-				std::cout << ", ";
-			}
-		}
+	// 	for (int i = 0; i < length; ++i)
+	// 	{
+	// 		Node<T> *elem = get_elem_at_index(i);
+	// 		std::cout << elem->data; 
 
-		std::cout << "]\n";
-	}
+	// 		if (i + 1 < length)
+	// 		{
+	// 			std::cout << ", ";
+	// 		}
+	// 	}
+
+	// 	std::cout << "]\n";
+	// }
 
 	int length;
 	Node<T> root_elem;
