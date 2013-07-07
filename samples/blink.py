@@ -2,7 +2,7 @@
 
 def setup():
     global led
-    led = 13
+    led = 11 + 2
     pinMode(led, OUTPUT)
 
 def loop():
