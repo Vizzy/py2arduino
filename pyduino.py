@@ -15,6 +15,9 @@ MESSAGE = '''/*
 
 VAR_NEW = '{indent}{type} {name} = {value}'
 VAR_REDEFINED = '{indent}{name} = {value}'
+LIST = '{indent}{type} {name}'
+TUPLE = '{indent}{type} {name}({elts})'
+
 AUG_ASSIGN = '{indent}{name} {op}= {value}'
 FUNC_DEF = '{type} {name}({args})'
 FUNC_CALL = '{indent}{name}({args})'
@@ -184,7 +187,46 @@ def get_func_returns(parsed):
 
     return funcs
 
+def process_container(obj, varname, result):
+    # create an actual live list
+    elts = [eval(to_arduino(elt)['code']) for elt in obj.elts]
+    indent = calc_indent(obj)
 
+    if isinstance(obj, ast.List):
+        container_type = get_arduino_type(elts)
+        code = LIST.format(indent=indent,
+            type=container_type, name=varname)
+
+        for elt in elts:
+            code += '{}.append({})\n'.format(calc_indent(obj),
+                varname, str(elt))
+
+    elif isinstance(obj, ast.Tuple):
+        elts = tuple(elts)
+        container_type = get_arduino_type(elts)
+
+        # we first need to create a temporary C-style array
+        # to construct a Tuple object from it
+
+        arr = str(elts).replace('(', '{').replace(')', '}')
+        arr_type = get_container_elts_type(elts)
+        arr_name = 'temp_arr'
+        arr_len = len(elts)
+        arr_code = '{indent}{type} {name}{size} = {arr}\n'.format(
+            indent=indent, type=arr_type, name='temp_arr',
+            size=str(arr_len), arr=arr)
+
+        tuple_code = '{indent}{type} {name}({arr})\n'.format(
+            indent=indent, type=container_type, name=varname,
+            arr=arr_name)
+
+        code = arr_code + tuple_code
+
+    else:
+        raise CompilationError('Only lists and tuples supported',
+            obj.lineno)
+
+    return {'type': container_type, 'code': code}
 
 def to_arduino(obj, result=None, newline=True):
 
@@ -204,12 +246,6 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.Num):
         return {'code': obj.n}
-
-    elif isinstance(obj, ast.List):
-        # create an actual list and get its type
-        elts = [eval(to_arduino(elt)['code']) for elt in obj.elts]
-        list_type = get_arduino_type(elts)
-        code = ...
 
     elif isinstance(obj, ast.Module):
         result = to_arduino(obj.body, result, newline=newline)
@@ -260,54 +296,58 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
-        var_value = to_arduino(obj.value, newline=newline)['code']
 
-        if isinstance(obj.value, ast.Call):
-            var_type = result['funcs'][var_value.split('(')[0].lstrip()]
-        elif isinstance(obj.value, (ast.List, ast.Tuple)):
-            var_type = get_container_type(obj.value.elts)
-        elif isinstance(obj.value, ast.BinOp):
-            # temporary hack until I think of the best way of handling this
-            var_type = 'int'
+        if isinstance(obj.value, (ast.List, ast.Tuple)):
+            processed = process_container(obj.value, var_name, result)
+            var_type = processed['type']
+            code = processed['code']
         else:
-            var_type = get_arduino_type(var_value)
+            var_value = to_arduino(obj.value, newline=newline)['code']
 
-        var_value = str(var_value).lstrip()
+            if isinstance(obj.value, ast.Call):
+                var_type = result['funcs'][var_value.split('(')[0].lstrip()]
+            elif isinstance(obj.value, ast.BinOp):
+                # temporary hack until I think of the best way of handling this
+                var_type = 'int'
+            else:
+                var_type = get_arduino_type(var_value)
 
-        scope = 'global' if obj.col_offset is 0 else 'local'
+            var_value = str(var_value).lstrip()
 
-        if var_name in result['variables'][scope]:
-            code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
-             value=var_value)
-        else:
+            scope = 'global' if obj.col_offset is 0 else 'local'
 
-            # if it's a pending global
-            if var_name in result['variables']['pending_globals']:
-                scope = 'global'
-
-                # add it to the top if it isn't there
-
-                if var_name not in result['variables']['global']:
-                    declaration_code = '{} {}'.format(var_type, var_name)
-
-                    # hack for the postprocessor
-                    try:
-                        result['global_declarations'].append(declaration_code)
-                    except KeyError:
-                        result['global_declarations'] = [declaration_code]
-
-                    result['variables']['global'][var_name] = var_type
-
+            if var_name in result['variables'][scope]:
                 code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
-             value=var_value)
+                 value=var_value)
+            else:
 
-                result['variables']['pending_globals'].remove(var_name)
+                # if it's a pending global
+                if var_name in result['variables']['pending_globals']:
+                    scope = 'global'
 
-            # if it's a fresh local declaration
-            else:    
-                code = VAR_NEW.format(indent=calc_indent(obj), type=var_type,
-                 name=var_name, 
-                    value=var_value)
+                    # add it to the top if it isn't there
+
+                    if var_name not in result['variables']['global']:
+                        declaration_code = '{} {}'.format(var_type, var_name)
+
+                        # hack for the postprocessor
+                        try:
+                            result['global_declarations'].append(declaration_code)
+                        except KeyError:
+                            result['global_declarations'] = [declaration_code]
+
+                        result['variables']['global'][var_name] = var_type
+
+                    code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
+                 value=var_value)
+
+                    result['variables']['pending_globals'].remove(var_name)
+
+                # if it's a fresh local declaration
+                else:    
+                    code = VAR_NEW.format(indent=calc_indent(obj), type=var_type,
+                     name=var_name, 
+                        value=var_value)
         
         result['variables'][scope][var_name] = var_type
 
