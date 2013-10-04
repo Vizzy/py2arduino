@@ -60,7 +60,7 @@ result_template = {
 MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
 BOARD_TAG = {board}
 ARDUINO_PORT = {port}
-CPPFLAGS = -std=c++11
+# CPPFLAGS = -std=c++11
 include $(ARDMK_DIR)/arduino-mk/Arduino.mk'''
 
 class CompilationError(Exception):
@@ -143,6 +143,19 @@ def get_operator(op):
 
     if isinstance(op, ast.Mod):
         return '%'
+
+def get_unaryop(op):
+    if isinstance(op, ast.Invert):
+        return '~'
+
+    if isinstance(op, ast.Not):
+        return '!'
+
+    if isinstance(op, ast.UAdd):
+        return '+'
+
+    if isinstance(op, ast.USub):
+        return '-'
 
 def get_cmpop(op):
     # cmpop = Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn
@@ -333,7 +346,7 @@ def to_arduino(obj, result=None, newline=True):
                         # hack for the postprocessor
                         try:
                             result['global_declarations'].append(declaration_code)
-                        except KeyError:
+                        except (KeyError, AttributeError):
                             result['global_declarations'] = [declaration_code]
 
                         result['variables']['global'][var_name] = var_type
@@ -475,6 +488,15 @@ def to_arduino(obj, result=None, newline=True):
         code = BIN_OP.format(indent=calc_indent(obj),
             left=left, right=right, op=op)
         result['code'] += code
+
+    elif isinstance(obj, ast.UnaryOp):
+        op = get_unaryop(obj.op)
+        print(result)
+        operand = to_arduino(obj.operand, result, newline=newline)['code']
+
+        code = calc_indent(obj) + op + operand
+        result['code'] += code
+
 
     elif isinstance(obj, ast.Import):
         newline = False
