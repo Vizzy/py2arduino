@@ -130,6 +130,36 @@ def get_binop_type(binop, result):
     and the dictionary of processed code so far
     and will attempt to deduce the type of the result'''
 
+    # division always results in a float
+    if isinstance(binop.op, ast.Div):
+        return 'float'
+
+    sides = (binop.left, binop.right)
+
+    for side in sides:
+        # recurse through the binop
+        if isinstance(side, ast.BinOp):
+            return get_binop_type(side, result)
+        # variables involved
+        if isinstance(side, ast.Name):
+            var = side.id
+            if (result['variables']['global'].get(var) == 'float' or
+                result['variables']['local'].get(var) == 'float'):
+                return 'float'
+        # function calls involved
+        if isinstance(side, ast.Call):
+            func_name = side.func.id
+            if result['funcs'][func_name] == 'float':
+                return 'float'
+    else:
+        if (isinstance(binop.left.n, float) or
+            isinstance(binop.right.n, float)):
+            return 'float'
+
+    # default to int
+    return 'int'
+
+
 def get_boolop(op):
     if isinstance(op, ast.And):
         return '&&'
@@ -152,6 +182,9 @@ def get_operator(op):
 
     if isinstance(op, ast.Mod):
         return '%'
+
+    if isinstance(op, ast.Pow):
+        return '^'
 
 def get_unaryop(op):
     if isinstance(op, ast.Invert):
@@ -324,13 +357,12 @@ def to_arduino(obj, result=None, newline=True):
             var_type = processed['type']
             code = processed['code']
         else:
-            var_value = to_arduino(obj.value, newline=newline)['code']
+            var_value = to_arduino(obj.value, newline=False)['code']
 
             if isinstance(obj.value, ast.Call):
-                var_type = result['funcs'][var_value.split('(')[0].lstrip()]
+                var_type = result['funcs'][obj.value.func.id]
             elif isinstance(obj.value, ast.BinOp):
-                # temporary hack until I think of the best way of handling this
-                var_type = 'int'
+                var_type = get_binop_type(obj.value, result)
             else:
                 var_type = get_arduino_type(var_value)
 
@@ -655,7 +687,8 @@ def run_make(sketchname):
 
 def main():
     global sketchname
-    sketchname = args.file.split('.py')[0].rsplit('/')[1]
+
+    sketchname = os.path.split(args.file)[1].split('.py')[0]
 
     sketchfile = open(args.file)
     translated = translate(sketchfile.read())
