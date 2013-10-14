@@ -21,6 +21,7 @@ TUPLE = '{indent}{type} {name}({elts})'
 AUG_ASSIGN = '{indent}{name} {op}= {value}'
 FUNC_DEF = '{type} {name}({args})'
 FUNC_CALL = '{indent}{name}({args})'
+BOOL_OP = '{indent}{left} {op} {right}'
 BIN_OP = '{indent}{left} {op} {right}'
 CMPOP = '{left} {cmpop} {comparator}'
 IF = '{indent}if ({test})'
@@ -123,10 +124,18 @@ def get_container_elts_type(container):
     else:
         return get_arduino_type(container[0])
 
+
 def get_binop_type(binop, result):
     '''This function takes an ast.BinOp object
     and the dictionary of processed code so far
     and will attempt to deduce the type of the result'''
+
+def get_boolop(op):
+    if isinstance(op, ast.And):
+        return '&&'
+
+    if isinstance(op, ast.Or):
+        return '||'
 
 def get_operator(op):
     if isinstance(op, ast.Add):
@@ -455,6 +464,60 @@ def to_arduino(obj, result=None, newline=True):
         code = while_code + orelse_code
         result['code'] += code
 
+    
+
+    elif isinstance(obj, ast.Return):
+        ret_value = to_arduino(obj.value, newline=newline)
+        result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
+
+    elif isinstance(obj, ast.BoolOp):
+        op = get_boolop(obj.op)
+
+        # left is the first element of obj.values
+        left = to_arduino(obj.values[0], newline=newline)['code']
+
+        # check if it's multiple boolean ops
+        for value in obj.values:
+            if not isinstance(value, ast.Name):
+                multiop = True
+            else:
+                multiop = False
+
+        # right is everything else (which we have to process recursively)
+        if multiop:
+            right = to_arduino(obj.values[1:], newline=newline)['code']
+            code = BOOL_OP.format(indent=calc_indent(obj), left=left, right=right,
+                                op=op)
+        # SPECIAL CASE IF IT'S THE SAME OPERATOR
+        # may Jah forgive me for this code
+        else:
+            right = [to_arduino(value, newline=False)['code'].strip()
+                        for value in obj.values[1:]]
+            right = (' ' + op + ' ').join(right)
+
+        
+        code = BOOL_OP.format(indent=calc_indent(obj), left=left, right=right,
+                                op=op)
+
+        result['code'] += code
+
+
+    elif isinstance(obj, ast.BinOp):
+        left = to_arduino(obj.left, newline=newline)['code']
+        right = to_arduino(obj.right, newline=newline)['code']
+        op = get_operator(obj.op)
+
+        code = BIN_OP.format(indent=calc_indent(obj),
+            left=left, right=right, op=op)
+        result['code'] += code
+
+    elif isinstance(obj, ast.UnaryOp):
+        op = get_unaryop(obj.op)
+        operand = to_arduino(obj.operand, result, newline=newline)['code']
+
+        code = calc_indent(obj) + op + operand
+        result['code'] += code
+
     elif isinstance(obj, ast.Compare):
         left = to_arduino(obj.left, newline=False)['code'].lstrip()
         
@@ -474,27 +537,6 @@ def to_arduino(obj, result=None, newline=True):
                 obj.lineno)
 
         code = CMPOP.format(left=left, cmpop=cmpop, comparator=comparator)
-        return {'code': code}
-
-    elif isinstance(obj, ast.Return):
-        ret_value = to_arduino(obj.value, newline=newline)
-        result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
-
-    elif isinstance(obj, ast.BinOp):
-        left = to_arduino(obj.left, newline=newline)['code']
-        right = to_arduino(obj.right, newline=newline)['code']
-        op = get_operator(obj.op)
-
-        code = BIN_OP.format(indent=calc_indent(obj),
-            left=left, right=right, op=op)
-        result['code'] += code
-
-    elif isinstance(obj, ast.UnaryOp):
-        op = get_unaryop(obj.op)
-        print(result)
-        operand = to_arduino(obj.operand, result, newline=newline)['code']
-
-        code = calc_indent(obj) + op + operand
         result['code'] += code
 
 

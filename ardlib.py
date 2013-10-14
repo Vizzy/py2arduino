@@ -21,6 +21,8 @@ OUTPUT = Mode('OUTPUT')
 HIGH = True
 LOW = False
 
+# digital IO
+
 def pinMode(x: int, mode: Mode):
 	pass
 
@@ -28,6 +30,14 @@ def digitalWrite(x: int, level: bool):
 	pass
 
 def digitalRead() -> int:
+	pass
+
+# analog IO
+
+def analogRead(pin: int) -> int:
+	pass
+
+def analogWrite(pin: int, value: int):
 	pass
 
 def delay(x: int):
