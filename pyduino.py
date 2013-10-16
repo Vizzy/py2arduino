@@ -475,9 +475,18 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.AugAssign):
         var_name = obj.target.id
-        var_type = get_arduino_type(obj.value.n)
+
+        if isinstance(obj.value, ast.Num):
+            var_type = get_arduino_type(obj.value.n)
+        elif isinstance(obj.value, ast.Name):
+            var_type = get_variable_type(obj.value, result)
 
         op = get_operator(obj.op)
+
+        # if it's division, it's a float
+        if op == '/':
+            var_type = 'float'
+
         var_value = str(to_arduino(obj.value, newline=newline)['code'])
 
         code = AUG_ASSIGN.format(indent=calc_indent(obj), name=var_name, 
@@ -485,8 +494,11 @@ def to_arduino(obj, result=None, newline=True):
 
         # update the type
         cur_scope = result['cur_scope']
-        if var_name in result['variables'][cur_scope]['DECLARED_GLOBALS']:
-            cur_scope = 'global'
+        try:    
+            if var_name in result['variables'][cur_scope]['DECLARED_GLOBALS']:
+                cur_scope = 'global'
+        except KeyError:
+            pass
 
         result['variables'][cur_scope][var_name] = var_type
 
@@ -570,8 +582,6 @@ def to_arduino(obj, result=None, newline=True):
 
         code = while_code + orelse_code
         result['code'] += code
-
-    
 
     elif isinstance(obj, ast.Return):
         ret_value = to_arduino(obj.value, newline=newline)
