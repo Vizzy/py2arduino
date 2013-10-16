@@ -42,6 +42,14 @@ container_types = (tuple, list)
 
 funcs = {}
 
+result_template = {
+            'variables': {'global': {}},
+            'funcs': funcs,
+            'cur_scope': 'global',
+            'code': ''
+}
+
+# add in types for library functions and constants
 for attr in dir(ardlib):
     # somehow this is the only way to check if something's a function in Python
     live_attr = eval('ardlib.' + attr)
@@ -49,13 +57,14 @@ for attr in dir(ardlib):
         func_name = attr
         func_type = signature(live_attr).return_annotation.__name__
         funcs[func_name] = types[func_type]
-
-result_template = {
-            'variables': {'global': {}},
-            'funcs': funcs,
-            'cur_scope': 'global',
-            'code': ''
-}
+    else:
+        # hack for library constants
+        if not attr.startswith('__'):
+            try:
+                const_type = types[type(live_attr).__name__]
+            except KeyError:
+                continue
+            result_template['variables']['global'][attr] = const_type
 
 
 MAKE_STRUCTURE = '''CODE_DIR = {sketch_folder}
@@ -510,18 +519,21 @@ def to_arduino(obj, result=None, newline=True):
     elif isinstance(obj, ast.Call):
         func_name = to_arduino(obj.func, newline=False)['code']
 
-        if isinstance(obj.args[0], ast.Call):
-            args_code = to_arduino(obj.args, newline=False)['code'].lstrip()
+        if obj.args != []:
+            if isinstance(obj.args[0], ast.Call):
+                args_code = to_arduino(obj.args, newline=False)['code'].lstrip()
 
+            else:
+                args_code = ''
+                for n, arg in enumerate(obj.args):
+                    if n + 1 < len(obj.args):
+                        args_code += str(to_arduino(arg,
+                                         newline=False)['code']).lstrip() + ', '
+                    else:
+                        args_code += str(to_arduino(arg,
+                                         newline=False)['code']).lstrip()
         else:
             args_code = ''
-            for n, arg in enumerate(obj.args):
-                if n + 1 < len(obj.args):
-                    args_code += str(to_arduino(arg,
-                                     newline=False)['code']).lstrip() + ', '
-                else:
-                    args_code += str(to_arduino(arg,
-                                     newline=False)['code']).lstrip()
 
         code = FUNC_CALL.format(indent=calc_indent(obj), name=func_name, args=args_code)
         result['code'] += code
@@ -544,7 +556,9 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.If):
         test_code = to_arduino(obj.test, newline=False)['code'].lstrip()
-        body_code = to_arduino(obj.body)['code']
+        temp_result = result.copy()
+        temp_result['code'] = ''
+        body_code = to_arduino(obj.body, temp_result)['code']
         try:
             orelse_code = to_arduino(obj.orelse[0])['code']
         except IndexError:
@@ -715,10 +729,12 @@ def postprocess(result):
     # hack to support global variables
     global_declarations = ''
     for global_var in result['variables']['global']:
-        var_type = result['variables']['global'][global_var]
-        var_declaration = VAR_NEW_UNASSIGNED.format(
-            indent='', type=var_type, name=global_var)
-        global_declarations += var_declaration + '\n'
+        # check that it's not a library constant
+        if global_var not in dir(ardlib):
+            var_type = result['variables']['global'][global_var]
+            var_declaration = VAR_NEW_UNASSIGNED.format(
+                indent='', type=var_type, name=global_var)
+            global_declarations += var_declaration + '\n'
     code = global_declarations + code
 
 

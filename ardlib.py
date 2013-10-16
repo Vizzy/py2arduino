@@ -18,8 +18,8 @@ class Serial:
 INPUT = Mode('INPUT')
 OUTPUT = Mode('OUTPUT')
 
-HIGH = True
-LOW = False
+HIGH = 1
+LOW = 0
 
 # digital IO
 
