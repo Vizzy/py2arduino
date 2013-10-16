@@ -13,6 +13,7 @@ MESSAGE = '''/*
  * (c) Anton Osten 
  */'''
 
+VAR_NEW_UNASSIGNED = '{indent}{type} {name}'
 VAR_NEW = '{indent}{type} {name} = {value}'
 VAR_REDEFINED = '{indent}{name} = {value}'
 LIST = '{indent}{type} {name}'
@@ -51,9 +52,10 @@ for attr in dir(ardlib):
         funcs[func_name] = types[func_type]
 
 result_template = {
-            'variables': {'global': {}, 'local': {}, 
+            'variables': {'global': {}, 
                             'pending_globals': set()},
             'funcs': funcs,
+            'cur_scope': 'global',
             'code': ''
 }
 
@@ -309,6 +311,9 @@ def to_arduino(obj, result=None, newline=True):
         func_name = obj.name
         func_args = set()
 
+        result['cur_scope'] = func_name
+        result['variables'][func_name] = {}
+
         for arg in obj.args.args:
             arg_name = arg.arg
             arg_type = to_arduino(arg.annotation, newline=newline)['code']
@@ -327,11 +332,27 @@ def to_arduino(obj, result=None, newline=True):
         else:
             func_type = types[obj.returns.id]
 
-        
+        # this is needed for var declarations later
+        # has to be stored now because otherwise the body gets popped
+        indent = calc_indent(obj.body[0])
+
         temp_result = result.copy()
         temp_result['code'] = ''
         to_arduino(obj.body, temp_result, newline=newline)
         body_code = temp_result['code']
+
+        # declare all the local variables at the top
+        # (important to ensure correct types)
+        for var_name in temp_result['variables'][func_name]:
+            if var_name == 'DECLARED_GLOBALS':
+                continue
+                
+            var_type = temp_result['variables'][func_name][var_name]
+
+            var_declaration = VAR_NEW_UNASSIGNED.format(
+                indent=indent, type=var_type, name=var_name)
+
+            body_code = var_declaration + '\n' + body_code
 
         declaration_code = FUNC_DEF.format(type=func_type, name=func_name,
                                 args=args_code)
@@ -343,11 +364,11 @@ def to_arduino(obj, result=None, newline=True):
         result['variables']['local'] = {}
         result['code'] += code
 
-        # hack for global variables
-        result['global_declarations'] = temp_result.get('global_declarations')
-
         if func_name != 'setup' and func_name != 'loop':
             result['code'] = declaration_code + ';\n\n' + result['code']
+
+        # set the scope back to global
+        result['cur_scope'] = 'global'
 
     elif isinstance(obj, ast.Assign):
         var_name = obj.targets[0].id
@@ -368,43 +389,19 @@ def to_arduino(obj, result=None, newline=True):
 
             var_value = str(var_value).lstrip()
 
-            scope = 'global' if obj.col_offset is 0 else 'local'
+            cur_scope = result['cur_scope']
 
-            if var_name in result['variables'][scope]:
-                code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
-                 value=var_value)
-            else:
+            code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
+             value=var_value)
 
-                # if it's a pending global
-                if var_name in result['variables']['pending_globals']:
-                    scope = 'global'
-
-                    # add it to the top if it isn't there
-
-                    if var_name not in result['variables']['global']:
-                        declaration_code = '{} {}'.format(var_type, var_name)
-
-                        # hack for the postprocessor
-                        try:
-                            result['global_declarations'].append(declaration_code)
-                        except (KeyError, AttributeError):
-                            result['global_declarations'] = [declaration_code]
-
-                        result['variables']['global'][var_name] = var_type
-
-                    code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
-                 value=var_value)
-
-                    result['variables']['pending_globals'].remove(var_name)
-
-                # if it's a fresh local declaration
-                else:    
-                    code = VAR_NEW.format(indent=calc_indent(obj), type=var_type,
-                     name=var_name, 
-                        value=var_value)
+        # check if it's used as a local or as a global
+        try:
+            if var_name in result['variables'][cur_scope]['DECLARED_GLOBALS']:
+                cur_scope = 'global'
+        except KeyError:
+            pass
         
-        result['variables'][scope][var_name] = var_type
-
+        result['variables'][cur_scope][var_name] = var_type
         result['code'] += code
 
     elif isinstance(obj, ast.AugAssign):
@@ -587,8 +584,9 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.Global):
         newline = False
-        pending_globals = set(obj.names)
-        result['variables']['pending_globals'] = pending_globals
+        declared_globals = set(obj.names)
+        cur_scope = result['cur_scope']
+        result['variables'][cur_scope]['DECLARED_GLOBALS'] = declared_globals
 
     elif isinstance(obj, ast.Pass):
         pass
@@ -619,7 +617,12 @@ def postprocess(result):
 
     # hack to support global variables
     try:
-        global_declarations = '\n'.join(result['global_declarations']) + '\n'
+        global_declarations = ''
+        for global_var in result['variables']['global']:
+            var_type = result['variables']['global'][global_var]
+            var_declaration = VAR_NEW_UNASSIGNED.format(
+                indent='', type=var_type, name=global_var)
+            global_declarations = '\n' + var_declaration + '\n'
         code = global_declarations + code
     except (KeyError, TypeError):
         pass

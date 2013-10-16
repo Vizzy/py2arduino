@@ -40,5 +40,13 @@ def analogRead(pin: int) -> int:
 def analogWrite(pin: int, value: int):
 	pass
 
+# TIME
+
+def millis() -> int:
+	pass
+
+def micros() -> int:
+	pass
+
 def delay(x: int):
 	pass
