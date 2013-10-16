@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.3
 
-import os, subprocess
+import os, subprocess, json
 from argparse import ArgumentParser
 
 from compiler import translate
@@ -24,6 +24,13 @@ def run(sketchname, upload=False):
         run_flag = '--upload'
     else:
         run_flag = '--verify'
+
+    # try to convert a user-friendly board name to its proper name
+    boards = json.load(open('boards.json'))
+    if args.board in boards:
+        board = boards[args.board]
+    else:
+        board = args.board
 
     sketchpath = os.path.join(sketchname, sketchname + '.ino')
     sketchpath = os.path.abspath(sketchpath)
