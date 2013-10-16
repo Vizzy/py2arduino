@@ -778,8 +778,7 @@ def write_translation(translated, filename, extension='ino'):
     except OSError:
         pass
 
-    if '/' in filename:
-        filename = os.path.split(filename)[1]
+    filename = os.path.split(filename)[1]
 
     sketchpath = os.path.join(sketchname, (filename.split('.')[0] + '.' + extension))
     with open(sketchpath, 'w') as sketch:
