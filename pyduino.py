@@ -14,8 +14,7 @@ MESSAGE = '''/*
  */'''
 
 VAR_NEW_UNASSIGNED = '{indent}{type} {name}'
-VAR_NEW = '{indent}{type} {name} = {value}'
-VAR_REDEFINED = '{indent}{name} = {value}'
+VAR_NEW_ASSIGNED = '{indent}{name} = {value}'
 LIST = '{indent}{type} {name}'
 TUPLE = '{indent}{type} {name}({elts})'
 
@@ -52,8 +51,7 @@ for attr in dir(ardlib):
         funcs[func_name] = types[func_type]
 
 result_template = {
-            'variables': {'global': {}, 
-                            'pending_globals': set()},
+            'variables': {'global': {}},
             'funcs': funcs,
             'cur_scope': 'global',
             'code': ''
@@ -80,6 +78,9 @@ class UnsupportedSyntaxError(CompilationError):
 class ContainerTypeError(CompilationError):
     pass
 
+class UndeclaredVariableError(CompilationError):
+    pass
+
 class UndeclaredFunctionWarning(Warning):
     pass
 
@@ -89,6 +90,7 @@ def unsupported_syntax(message, line):
 calc_indent = lambda obj: ' ' * obj.col_offset
 
 def get_arduino_type(value):
+
     valtype = type(value)
 
     if valtype is str:
@@ -145,14 +147,20 @@ def get_binop_type(binop, result):
         # variables involved
         if isinstance(side, ast.Name):
             var = side.id
-            if (result['variables']['global'].get(var) == 'float' or
-                result['variables']['local'].get(var) == 'float'):
-                return 'float'
+            var_type = result['variables'][result['cur_scope']].get(var)
+            if var_type is None:
+                var_type = result['variables']['global'].get(var)
+
+            if var_type is None:
+                raise UndeclaredVariableError(
+                    'Variable {} has not been declared'.format(var),
+                    side.lineno)
+            
+            return var_type
         # function calls involved
         if isinstance(side, ast.Call):
             func_name = side.func.id
-            if result['funcs'][func_name] == 'float':
-                return 'float'
+            return result[funcs][func_name]
     else:
         if (isinstance(binop.left.n, float) or
             isinstance(binop.right.n, float)):
@@ -160,6 +168,23 @@ def get_binop_type(binop, result):
 
     # default to int
     return 'int'
+
+def get_unaryop_type(unaryop, result):
+    # if it's a variable
+    if isinstance(unaryop.operand, ast.Name):
+        var_name = unaryop.operand.id
+        var_type = result['variables'][result['cur_scope']].get(var_name)
+        if var_type is None:
+            var_type = result['variables']['global'].get(var_name)
+
+        if var_type is None:
+            raise UndeclaredVariableError(
+                'Variable {} has not been declared'.format(var_name),
+                unaryop.lineno)
+        else:
+            return var_type
+    else:
+        return get_arduino_type(unaryop.operand.n)
 
 
 def get_boolop(op):
@@ -346,7 +371,7 @@ def to_arduino(obj, result=None, newline=True):
         for var_name in temp_result['variables'][func_name]:
             if var_name == 'DECLARED_GLOBALS':
                 continue
-                
+
             var_type = temp_result['variables'][func_name][var_name]
 
             var_declaration = VAR_NEW_UNASSIGNED.format(
@@ -384,6 +409,8 @@ def to_arduino(obj, result=None, newline=True):
                 var_type = result['funcs'][obj.value.func.id]
             elif isinstance(obj.value, ast.BinOp):
                 var_type = get_binop_type(obj.value, result)
+            elif isinstance(obj.value, ast.UnaryOp):
+                var_type = get_unaryop_type(obj.value, result)
             else:
                 var_type = get_arduino_type(var_value)
 
@@ -391,7 +418,7 @@ def to_arduino(obj, result=None, newline=True):
 
             cur_scope = result['cur_scope']
 
-            code = VAR_REDEFINED.format(indent=calc_indent(obj), name=var_name,
+            code = VAR_NEW_ASSIGNED.format(indent=calc_indent(obj), name=var_name,
              value=var_value)
 
         # check if it's used as a local or as a global
@@ -616,16 +643,13 @@ def postprocess(result):
     code = code.replace('False', 'false')
 
     # hack to support global variables
-    try:
-        global_declarations = ''
-        for global_var in result['variables']['global']:
-            var_type = result['variables']['global'][global_var]
-            var_declaration = VAR_NEW_UNASSIGNED.format(
-                indent='', type=var_type, name=global_var)
-            global_declarations = '\n' + var_declaration + '\n'
-        code = global_declarations + code
-    except (KeyError, TypeError):
-        pass
+    global_declarations = ''
+    for global_var in result['variables']['global']:
+        var_type = result['variables']['global'][global_var]
+        var_declaration = VAR_NEW_UNASSIGNED.format(
+            indent='', type=var_type, name=global_var)
+        global_declarations += var_declaration + '\n'
+    code = global_declarations + code
 
     # add semicolons
     code = code.splitlines()
