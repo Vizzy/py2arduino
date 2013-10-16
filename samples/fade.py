@@ -7,11 +7,11 @@
  This example code is in the public domain.
 '''
 
-led = 9           # the pin that the LED is attached to
-brightness = 0    # how bright the LED is
-fadeAmount = 5    # how many points to fade the LED by
-
 def setup():
+  global brightness, fadeAmount, led
+  led = 13           # the pin that the LED is attached to
+  brightness = 0    # how bright the LED is
+  fadeAmount = 5    # how many points to fade the LED by
   # declare pin 9 to be an output:
   pinMode(led, OUTPUT)
 
