@@ -115,6 +115,27 @@ def get_arduino_type(value):
         raise TypeError('Type {} is not yet supported'.format(
             valtype.__name__))
 
+def get_variable_type(name_obj, result):
+    '''Returns the type of an initialised variable
+        from an ast.Name object
+        or fails with an error if no such variable has been initialised'''
+
+    cur_scope = result['cur_scope']
+    var_name = name_obj.id
+
+    try:
+        var_type = result['variables'][cur_scope][var_name]
+    except KeyError:
+        try:
+            var_type = result['variables']['global'][var_name]
+        except KeyError:
+            raise UndeclaredVariableError(
+                'variable {} has not been declared'.format(var_name),
+                name_obj.lineno)
+
+    return var_type
+
+
 def get_container_elts_type(container):
     if len(container) is 0:
         return None
@@ -313,6 +334,9 @@ def process_container(obj, varname, result):
 
     return {'type': container_type, 'code': code}
 
+
+# COMPILER/TRANSLATOR
+
 def to_arduino(obj, result=None, newline=True):
 
     if result is None:
@@ -337,7 +361,7 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.FunctionDef):
         func_name = obj.name
-        func_args = set()
+        func_args = {}
 
         result['cur_scope'] = func_name
         result['variables'][func_name] = {}
@@ -345,23 +369,25 @@ def to_arduino(obj, result=None, newline=True):
         for arg in obj.args.args:
             arg_name = arg.arg
             arg_type = to_arduino(arg.annotation, newline=newline)['code']
-            func_args.add((arg_name, arg_type))
+            # convert the type to proper arduino type
+            try:
+                arg_type = types[arg_type]
+            except KeyError:
+                raise UnsupportedSyntaxError
+            func_args[arg_name] = arg_type
+            # arguments are local variables
+            result['variables'][func_name][arg_name] = arg_type
 
         args_code = ''
 
         for n, arg in enumerate(func_args):
             if n + 1 < len(func_args):
-                args_code += '{} {}, '.format(arg[1], arg[0])
+                args_code += '{} {}, '.format(func_args[arg], arg)
             else:
-                args_code += '{} {}'.format(arg[1], arg[0])
+                args_code += '{} {}'.format(func_args[arg], arg)
 
-        if obj.returns is None:
-            func_type = 'void'
-        else:
-            func_type = types[obj.returns.id]
-
-        # this is needed for var declarations later
-        # has to be stored now because otherwise the body gets popped
+        # this is needed for variable declarations later
+        # must be stored here because otherwise the body gets popped out
         indent = calc_indent(obj.body[0])
 
         temp_result = result.copy()
@@ -369,10 +395,21 @@ def to_arduino(obj, result=None, newline=True):
         to_arduino(obj.body, temp_result, newline=newline)
         body_code = temp_result['code']
 
+        # get function type
+        # strong preference given to annotations
+        if obj.returns is None:
+            try:
+                func_type = temp_result['funcs'][func_name]
+            except KeyError:
+                func_type = 'void'
+        else:
+            func_type = types[obj.returns.id]
+
         # declare all the local variables at the top
         # (important to ensure correct types)
         for var_name in temp_result['variables'][func_name]:
-            if var_name == 'DECLARED_GLOBALS':
+            if (var_name == 'DECLARED_GLOBALS' or 
+                var_name in func_args):
                 continue
 
             var_type = temp_result['variables'][func_name][var_name]
@@ -389,7 +426,6 @@ def to_arduino(obj, result=None, newline=True):
                  + body_code + '}\n')
 
         result['funcs'][func_name] = func_type
-        result['variables']['local'] = {}
         result['code'] += code
 
         if func_name != 'setup' and func_name != 'loop':
@@ -408,7 +444,9 @@ def to_arduino(obj, result=None, newline=True):
         else:
             var_value = to_arduino(obj.value, newline=False)['code']
 
-            if isinstance(obj.value, ast.Call):
+            if isinstance(obj.value, ast.Name):
+                var_type = get_variable_type(obj.value, result)
+            elif isinstance(obj.value, ast.Call):
                 var_type = result['funcs'][obj.value.func.id]
             elif isinstance(obj.value, ast.BinOp):
                 var_type = get_binop_type(obj.value, result)
@@ -537,7 +575,16 @@ def to_arduino(obj, result=None, newline=True):
 
     elif isinstance(obj, ast.Return):
         ret_value = to_arduino(obj.value, newline=newline)
-        result['code'] += calc_indent(obj) + 'return ' + ret_value['code'].lstrip()
+        # get its type for function type inference
+        cur_scope = result['cur_scope']
+        if isinstance(obj.value, ast.Name):
+            ret_type = get_variable_type(obj.value, result)
+        elif isinstance(obj.value, ast.Num):
+            ret_type = get_arduino_type(obj.value.n)
+        else:
+            ret_type = 'void'
+        result['funcs'][cur_scope] = ret_type
+        result['code'] += calc_indent(obj) + 'return ' + str(ret_value['code']).lstrip()
 
     elif isinstance(obj, ast.BoolOp):
         op = get_boolop(obj.op)
