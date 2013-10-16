@@ -140,6 +140,7 @@ def get_binop_type(binop, result):
 
     sides = (binop.left, binop.right)
 
+
     for side in sides:
         # recurse through the binop
         if isinstance(side, ast.BinOp):
@@ -156,15 +157,17 @@ def get_binop_type(binop, result):
                     'Variable {} has not been declared'.format(var),
                     side.lineno)
             
-            return var_type
+            elif var_type == 'float':
+                return var_type
         # function calls involved
         if isinstance(side, ast.Call):
             func_name = side.func.id
-            return result[funcs][func_name]
-    else:
-        if (isinstance(binop.left.n, float) or
-            isinstance(binop.right.n, float)):
-            return 'float'
+            if result[funcs][func_name] == 'float':
+                return 'float'
+        # if it's a float, the whole thing's a float
+        if isinstance(side, ast.Num):
+            if type(side.n) is float:
+                return 'float'
 
     # default to int
     return 'int'
@@ -428,16 +431,26 @@ def to_arduino(obj, result=None, newline=True):
         except KeyError:
             pass
         
+        # update the type
         result['variables'][cur_scope][var_name] = var_type
         result['code'] += code
 
     elif isinstance(obj, ast.AugAssign):
         var_name = obj.target.id
+        var_type = get_arduino_type(obj.value.n)
+
         op = get_operator(obj.op)
         var_value = str(to_arduino(obj.value, newline=newline)['code'])
 
         code = AUG_ASSIGN.format(indent=calc_indent(obj), name=var_name, 
                                     op=op, value=var_value)
+
+        # update the type
+        cur_scope = result['cur_scope']
+        if var_name in result['variables'][cur_scope]['DECLARED_GLOBALS']:
+            cur_scope = 'global'
+
+        result['variables'][cur_scope][var_name] = var_type
 
         result['code'] += code
 
@@ -650,6 +663,7 @@ def postprocess(result):
             indent='', type=var_type, name=global_var)
         global_declarations += var_declaration + '\n'
     code = global_declarations + code
+
 
     # add semicolons
     code = code.splitlines()
