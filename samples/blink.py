@@ -2,14 +2,11 @@
 
 def setup():
     global led
-    led = 11 + 2
+    led = 13
     pinMode(led, OUTPUT)
 
 def loop():
     digitalWrite(led, HIGH)
-    delay(calc_delay(500))
+    delay(1000)
     digitalWrite(led, LOW)
-    delay(calc_delay(500*2))
-
-def calc_delay(x: int) -> int:
-    return x * 2
+    delay(1000)

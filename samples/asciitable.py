@@ -8,10 +8,8 @@ def setup():
     # prints title with ending line break 
     Serial.println("ASCII Table ~ Character Map")
 
-thisByte = 33
-
-def loop():
-    global thisByte 
+def loop(): 
+    thisByte = 33
 
     Serial.write(thisByte)
     Serial.print(", dec: ")
