@@ -1,4 +1,4 @@
-import ast
+import ast, copy
 from inspect import signature
 from warnings import warn, simplefilter
 
@@ -80,6 +80,9 @@ class ContainerTypeError(CompilationError):
 class UndeclaredVariableError(CompilationError):
     pass
 
+class UndeclaredFunctionError(CompilationError):
+    pass
+
 class UndeclaredFunctionWarning(Warning):
     pass
 
@@ -133,6 +136,30 @@ def get_variable_type(name_obj, result):
                 name_obj.lineno)
 
     return var_type
+
+def infer_func_return(func_name, result):
+
+    func_objs = filter(lambda x: isinstance(x, ast.FunctionDef), parsed.body)
+    try:
+        func_obj = list(
+            filter(lambda func: func.name == func_name, func_objs))[0]
+    except IndexError:
+        raise UndeclaredFunctionError(
+            'function {} has not been declared'.format(func_name), -1)
+
+    # analyse the function and infer the type if annotations are absent
+    if func_obj.returns is None:
+        temp_result = result.copy()
+        temp_result['code'] = ''
+        to_arduino(func_obj, temp_result)
+        # add the code for the translated function to the top
+        # result['code'] = temp_result['code'] + result['code']
+        result['funcs'].update(temp_result['funcs'])
+        result['variables'].update(temp_result['variables'])
+
+    # if there are returns annotations, just take them
+    else:
+        result[func_name] = types[func_obj.returns.id]
 
 
 def get_container_elts_type(container):
@@ -276,22 +303,6 @@ def get_cmpop(op):
     if isinstance(op, ast.IsNot):
         return '!='
 
-def get_func_returns(parsed):
-    funcs = {}
-
-    for obj in parsed.body:
-        if isinstance(obj, ast.FunctionDef):
-            func_name = obj.name
-
-            if obj.returns is None:
-                func_type = 'void'
-            else:
-                func_type = types[obj.returns.id]
-
-            funcs[func_name] = func_type
-
-    return funcs
-
 def process_container(obj, varname, result):
     # create an actual live list
     elts = [eval(to_arduino(elt)['code']) for elt in obj.elts]
@@ -337,7 +348,6 @@ def process_container(obj, varname, result):
 # COMPILER/TRANSLATOR
 
 def to_arduino(obj, result=None, newline=True):
-
     if result is None:
         result = result_template.copy()
 
@@ -507,8 +517,13 @@ def to_arduino(obj, result=None, newline=True):
         return to_arduino(obj.value, result, newline=newline)
 
     elif isinstance(obj, ast.Call):
-        func_name = to_arduino(obj.func, newline=False)['code']
+        func_name = obj.func.id
 
+        if (func_name not in result['funcs']
+            and func_name != result['cur_scope']):
+            infer_func_return(func_name, result)
+
+        # parse the arguments
         if obj.args != []:
             if isinstance(obj.args[0], ast.Call):
                 args_code = to_arduino(obj.args, newline=False)['code'].lstrip()
@@ -595,6 +610,10 @@ def to_arduino(obj, result=None, newline=True):
             ret_type = get_variable_type(obj.value, result)
         elif isinstance(obj.value, ast.Num):
             ret_type = get_arduino_type(obj.value.n)
+        elif isinstance(obj.value, ast.Call):
+            ret_type = result['funcs'][obj.value.func.id]
+        elif isinstance(obj.value, ast.BinOp):
+            ret_type = get_binop_type(obj.value, result)
         else:
             ret_type = 'void'
         result['funcs'][cur_scope] = ret_type
@@ -717,6 +736,7 @@ def postprocess(result):
     code = code.replace('False', 'false')
 
     # hack to support global variables
+
     global_declarations = ''
     for global_var in result['variables']['global']:
         # check that it's not a library constant
@@ -734,7 +754,8 @@ def postprocess(result):
 
     for n, line in enumerate(code):
         if (not (line.endswith('{') or line.endswith('}'))
-            and not line.endswith(';') and len(line) > 0):
+            and not line.endswith(';') and not line.endswith('*/')
+            and len(line) > 0):
             line += ';\n'
         elif line.endswith('}'):
             line += '\n\n'
@@ -749,13 +770,14 @@ def postprocess(result):
     return code
 
 def translate(code):
+    # reluctantly making this a global variable
+    global parsed
     parsed = ast.parse(code)
 
-    funcs = get_func_returns(parsed)
     result = result_template.copy()
-    result['funcs'].update(funcs)
-
-    to_arduino(parsed, result)
+    # pass the copy of the parsed object to the compiler
+    # otherwise its contents will be mutated
+    to_arduino(copy.deepcopy(parsed), result)
 
     result['code'] = postprocess(result)
     return result
