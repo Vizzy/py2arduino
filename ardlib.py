@@ -2,7 +2,15 @@ class Mode:
 	def __init__(self, mode):
 		self.mode = mode
 
+class Format():
+	def __init__(self, theformat):
+		self.format = theformat
+
 class Serial:
+	@staticmethod
+	def available() -> int:
+		pass
+
 	@staticmethod
 	def begin(baudrate: int):
 		pass
@@ -12,11 +20,20 @@ class Serial:
 		pass
 
 	@staticmethod
-	def println(text: str):
+	def println(text: str, format: Format=None):
+		pass
+
+	@staticmethod
+	def read() -> int:
 		pass
 
 INPUT = Mode('INPUT')
 OUTPUT = Mode('OUTPUT')
+
+DEC = Format('DEC')
+HEX = Format('HEX')
+OCT = Format('OCT')
+BIN = Format('BIN')
 
 HIGH = 1
 LOW = 0

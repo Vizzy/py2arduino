@@ -37,6 +37,9 @@ types = {
 # supported container types
 container_types = (tuple, list)
 
+# python constants
+py_consts = {'True': 'boolean', 'False': 'boolean'}
+
 funcs = {}
 
 result_template = {
@@ -50,10 +53,20 @@ result_template = {
 for attr in dir(ardlib):
     # somehow this is the only way to check if something's a function in Python
     live_attr = eval('ardlib.' + attr)
-    if type(live_attr) is type(lambda x: x):
+    if type(live_attr).__name__ == 'function':
         func_name = attr
         func_type = signature(live_attr).return_annotation.__name__
         funcs[func_name] = types[func_type]
+
+    # if it's a class
+    elif type(live_attr).__name__ == 'type':
+        for class_attr in dir(live_attr):
+            live_class_attr = eval('ardlib.{}.{}'.format(attr, class_attr))
+            if (type(live_class_attr).__name__ == 'function' and
+                not class_attr.startswith('__')):
+                func_name = attr + '.' + class_attr
+                func_type = signature(live_class_attr).return_annotation.__name__
+                funcs[func_name] = types[func_type]
     else:
         # hack for library constants
         if not attr.startswith('__'):
@@ -144,6 +157,7 @@ def infer_func_return(func_name, result):
         func_obj = list(
             filter(lambda func: func.name == func_name, func_objs))[0]
     except IndexError:
+        print(result['funcs'])
         raise UndeclaredFunctionError(
             'function {} has not been declared'.format(func_name), -1)
 
@@ -161,6 +175,16 @@ def infer_func_return(func_name, result):
     else:
         result[func_name] = types[func_obj.returns.id]
 
+def get_func_name(func_obj, result):
+    '''useful for dealing with local functions
+    and imported class functions'''
+    if isinstance(func_obj, ast.Name):
+        return func_obj.id
+    elif isinstance(func_obj, ast.Attribute):
+        class_name = to_arduino(func_obj.value,
+         newline=False)['code'].lstrip()
+        attribute_name = func_obj.attr
+        return '{}.{}'.format(class_name, attribute_name)
 
 def get_container_elts_type(container):
     if len(container) is 0:
@@ -456,7 +480,8 @@ def to_arduino(obj, result=None, newline=True):
             if isinstance(obj.value, ast.Name):
                 var_type = get_variable_type(obj.value, result)
             elif isinstance(obj.value, ast.Call):
-                var_type = result['funcs'][obj.value.func.id]
+                func_name = get_func_name(obj.value.func, result)
+                var_type = result['funcs'][func_name]
             elif isinstance(obj.value, ast.BinOp):
                 var_type = get_binop_type(obj.value, result)
             elif isinstance(obj.value, ast.UnaryOp):
@@ -517,7 +542,8 @@ def to_arduino(obj, result=None, newline=True):
         return to_arduino(obj.value, result, newline=newline)
 
     elif isinstance(obj, ast.Call):
-        func_name = obj.func.id
+        # if it's a local function
+        func_name = get_func_name(obj.func, result)
 
         if (func_name not in result['funcs']
             and func_name != result['cur_scope']):
@@ -610,6 +636,11 @@ def to_arduino(obj, result=None, newline=True):
             ret_type = get_variable_type(obj.value, result)
         elif isinstance(obj.value, ast.Num):
             ret_type = get_arduino_type(obj.value.n)
+        elif isinstance(obj.value, ast.Str):
+            if len(obj.value.s) > 1:
+                ret_type = 'char *'
+            else:
+                ret_type = 'char'
         elif isinstance(obj.value, ast.Call):
             ret_type = result['funcs'][obj.value.func.id]
         elif isinstance(obj.value, ast.BinOp):
@@ -740,7 +771,8 @@ def postprocess(result):
     global_declarations = ''
     for global_var in result['variables']['global']:
         # check that it's not a library constant
-        if global_var not in dir(ardlib):
+        if (global_var not in dir(ardlib)
+            and global_var not in py_consts):
             var_type = result['variables']['global'][global_var]
             var_declaration = VAR_NEW_UNASSIGNED.format(
                 indent='', type=var_type, name=global_var)
@@ -775,6 +807,9 @@ def translate(code):
     parsed = ast.parse(code)
 
     result = result_template.copy()
+    
+    # add python constants to the global variables
+    result['variables']['global'].update(py_consts)
     # pass the copy of the parsed object to the compiler
     # otherwise its contents will be mutated
     to_arduino(copy.deepcopy(parsed), result)

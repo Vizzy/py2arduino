@@ -32,13 +32,23 @@ def run(sketchname, upload=False):
     else:
         board = args.board
 
+    if args.verbose:
+        verbose = '-v'
+    else:
+        verbose = ''
+
     sketchpath = os.path.join(sketchname, sketchname + '.ino')
     sketchpath = os.path.abspath(sketchpath)
+    print(sketchpath)
     subprocess.call([config.arduino_path,
                     args.board,
                     args.port,
+                    verbose,
                     run_flag,
                     sketchpath])
+
+    # delete the sketch
+    os.unlink(sketchpath)
 
 def main():
     global sketchname
@@ -68,7 +78,7 @@ if __name__ == '__main__':
         default=False, help='compile the script')
     argp.add_argument('-b', '--board', type=str, default='uno', 
         help='board type to compile for')
-    argp.add_argument('-p', '--port', default='/dev/ttyusb', type=str,
+    argp.add_argument('-p', '--port', type=str, default='/dev/tty.usbmodemfa131',
         help='arduino serial port')
     argp.add_argument('-u', '--upload', action='store_true', default=False, 
         help='upload the script to the board (works only if -c or --compile is specified')
